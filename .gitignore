@@ -6,3 +6,10 @@ dist/
 
 # Ignore ClinVar import VCF file
 clinvar.vcf
+
+__pycache__/
+variomex-app/db.json
+variomex-app/upload-metadata.json
+variomex-app/mutate.vcf
+variomex-app/uploads/
+

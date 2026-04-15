@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dna, Activity, FileCheck, Clock, Upload, ArrowRight, X } from "lucide-react";
 import api, { CheckDiseaseResult, MutationResult } from "@/lib/api";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 
 export default function UserDashboard() {
@@ -34,6 +34,84 @@ export default function UserDashboard() {
     const [checking, setChecking] = useState(false);
     const [checkResult, setCheckResult] = useState<CheckDiseaseResult | null>(null);
     const [checkError, setCheckError] = useState<string | null>(null);
+
+    // Upload functionality
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isUploading, setIsUploading] = useState(false);
+
+    // Dynamic stats
+    const [datasetsCount, setDatasetsCount] = useState(0);
+    const [requests, setRequests] = useState<any[]>([]);
+
+    const fetchData = async () => {
+        try {
+            const [dsRes, reqRes] = await Promise.all([
+                fetch("/api/data"),
+                fetch("/api/requests")
+            ]);
+            
+            if (dsRes.ok) {
+                const dsJson = await dsRes.json();
+                if (dsJson.datasets) setDatasetsCount(dsJson.datasets.length);
+            }
+            if (reqRes.ok) {
+                const reqJson = await reqRes.json();
+                if (reqJson.requests) setRequests(reqJson.requests);
+            }
+        } catch(e) {
+            console.error("Dashboard fetch err:", e);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+        const interval = setInterval(fetchData, 3000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsUploading(true);
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const response = await fetch("/api/upload", {
+                method: "POST",
+                body: formData,
+            });
+
+            if (!response.ok) throw new Error("Upload failed");
+            toast.success("Genome file uploaded successfully! View securely in 'My Data'.");
+            fetchData();
+        } catch (error) {
+            console.error("Upload error:", error);
+            toast.error("An error occurred during upload.");
+        } finally {
+            setIsUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+    };
+
+    const handleRequestAction = async (id: string, status: string) => {
+        try {
+            const res = await fetch("/api/requests", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ requestId: id, status })
+            });
+            if (res.ok) {
+                toast.success(`Request ${status} successfully!`);
+                fetchData();
+            } else {
+                toast.error(`Failed to update request.`);
+            }
+        } catch (error) {
+            toast.error(`Error updating request.`);
+        }
+    };
 
     const handleCheckDisease = async () => {
         if (!genomeId || !diseaseInput) {
@@ -77,6 +155,9 @@ export default function UserDashboard() {
         }
     };
 
+    const pendingRequests = requests.filter(r => r.status === "pending");
+    const activePermissions = requests.filter(r => r.status === "approved").length;
+
     return (
         <div className="flex flex-col gap-6">
             <div className="flex items-center justify-between">
@@ -84,10 +165,13 @@ export default function UserDashboard() {
                     <h2 className="text-3xl font-bold tracking-tight text-primary">Welcome back, {user?.name}</h2>
                     <p className="text-muted-foreground">Manage your genomic data and access requests.</p>
                 </div>
-                <Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20">
-                    <Upload className="mr-2 h-4 w-4" />
-                    Upload Genome
-                </Button>
+                <div className="flex items-center gap-4">
+                    <input type="file" ref={fileInputRef} className="hidden" accept=".vcf,.vcf.gz" onChange={handleFileUpload} />
+                    <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20">
+                        {isUploading ? <Activity className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                        {isUploading ? "Uploading..." : "Upload Genome"}
+                    </Button>
+                </div>
             </div>
 
             {/* Genome disease check card */}
@@ -133,44 +217,36 @@ export default function UserDashboard() {
                 </CardContent>
             </Card>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <Card className="shadow-sm border-primary/10">
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Genomes Uploaded</CardTitle>
                         <Dna className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">3</div>
-                        <p className="text-xs text-muted-foreground">+1 from last month</p>
+                        <div className="text-2xl font-bold">{datasetsCount}</div>
+                        <p className="text-xs text-muted-foreground">Active datasets securely stored</p>
                     </CardContent>
                 </Card>
-                <Card className="shadow-sm border-primary/10">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Pipeline Status</CardTitle>
-                        <Activity className="h-4 w-4 text-green-500" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-green-600">Running</div>
-                        <p className="text-xs text-muted-foreground">Job #4029 processing</p>
-                    </CardContent>
-                </Card>
+
                 <Card className="shadow-sm border-primary/10">
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Pending Approvals</CardTitle>
                         <Clock className="h-4 w-4 text-yellow-500" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">1</div>
+                        <div className="text-2xl font-bold">{pendingRequests.length}</div>
                         <p className="text-xs text-muted-foreground">Need your review</p>
                     </CardContent>
                 </Card>
+                
                 <Card className="shadow-sm border-primary/10">
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Access Granted</CardTitle>
                         <FileCheck className="h-4 w-4 text-blue-500" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">7</div>
+                        <div className="text-2xl font-bold">{activePermissions}</div>
                         <p className="text-xs text-muted-foreground">Active permissions</p>
                     </CardContent>
                 </Card>
@@ -190,26 +266,32 @@ export default function UserDashboard() {
                                 <TableRow>
                                     <TableHead>Event</TableHead>
                                     <TableHead>Status</TableHead>
-                                    <TableHead className="text-right">Date</TableHead>
+                                    <TableHead className="text-right">Time</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {[
-                                    { event: "Genome Upload (HG38)", status: "Completed", date: "2 mins ago" },
-                                    { event: "Access Request from Dr. Smith", status: "Pending", date: "1 hour ago" },
-                                    { event: "Pipeline Analysis Job #4028", status: "Failed", date: "Yesterday" },
-                                    { event: "Data Export", status: "Completed", date: "2 days ago" },
-                                ].map((item, i) => (
+                                {requests.slice(0, 4).map((item, i) => (
                                     <TableRow key={i}>
-                                        <TableCell className="font-medium">{item.event}</TableCell>
+                                        <TableCell className="font-medium">
+                                            Request for {item.datasetName.slice(0, 15)}...
+                                        </TableCell>
                                         <TableCell>
-                                            <Badge variant={item.status === "Completed" ? "default" : item.status === "Pending" ? "secondary" : "destructive"}>
+                                            <Badge variant={item.status === "approved" ? "default" : item.status === "pending" ? "secondary" : "destructive"}>
                                                 {item.status}
                                             </Badge>
                                         </TableCell>
-                                        <TableCell className="text-right text-muted-foreground">{item.date}</TableCell>
+                                        <TableCell className="text-right text-muted-foreground">
+                                            {new Date(item.requestedAt).toLocaleTimeString()}
+                                        </TableCell>
                                     </TableRow>
                                 ))}
+                                {requests.length === 0 && (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="text-center text-muted-foreground h-24">
+                                            No recent activity directly recorded. Upload data to begin.
+                                        </TableCell>
+                                    </TableRow>
+                                )}
                             </TableBody>
                         </Table>
                     </CardContent>
@@ -224,29 +306,30 @@ export default function UserDashboard() {
                     </CardHeader>
                     <CardContent>
                         <div className="space-y-4">
-                            {[
-                                { name: "Global Pharma Research", reason: "Drug sensitivity study", type: "Full Genome" },
-                                { name: "University of Medical Sciences", reason: "Population genetics", type: "VCF Only" },
-                            ].map((req, i) => (
+                            {pendingRequests.map((req, i) => (
                                 <div key={i} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
                                     <div className="space-y-1">
-                                        <p className="text-sm font-medium leading-none">{req.name}</p>
-                                        <p className="text-xs text-muted-foreground">{req.reason}</p>
-                                        <Badge variant="outline" className="text-[10px] mt-1">{req.type}</Badge>
+                                        <p className="text-sm font-medium leading-none">{req.researcher}</p>
+                                        <p className="text-xs text-muted-foreground border border-muted p-1 px-2 rounded-md bg-muted/20">
+                                            Dataset: {req.datasetName}
+                                        </p>
+                                        <Badge variant="outline" className="text-[10px] mt-1">{req.reason}</Badge>
                                     </div>
                                     <div className="flex gap-2">
-                                        <Button size="sm" variant="outline" className="h-8 w-8 p-0 text-green-600 border-green-200 bg-green-50 hover:bg-green-100">
+                                        <Button size="sm" variant="outline" onClick={() => handleRequestAction(req.id, "approved")} className="h-8 w-8 p-0 text-green-600 border-green-200 bg-green-50 hover:bg-green-100">
                                             <FileCheck className="h-4 w-4" />
                                         </Button>
-                                        <Button size="sm" variant="outline" className="h-8 w-8 p-0 text-red-600 border-red-200 bg-red-50 hover:bg-red-100">
+                                        <Button size="sm" variant="outline" onClick={() => handleRequestAction(req.id, "rejected")} className="h-8 w-8 p-0 text-red-600 border-red-200 bg-red-50 hover:bg-red-100">
                                             <X className="h-4 w-4" />
                                         </Button>
                                     </div>
                                 </div>
                             ))}
-                            <Button variant="ghost" className="w-full mt-2 text-xs">
-                                View All Requests <ArrowRight className="ml-2 h-3 w-3" />
-                            </Button>
+                            {pendingRequests.length === 0 && (
+                                <div className="text-sm text-center text-muted-foreground italic h-20 flex items-center justify-center border-dashed border-2 rounded-md border-muted">
+                                    You have no pending requests.
+                                </div>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
