@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useAuth } from "@/context/auth-context";
@@ -24,21 +23,71 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Search, History, Database, ArrowUpRight, FlaskConical } from "lucide-react";
 import { useState } from "react";
+import api, { DiseaseVariant } from "@/lib/api";
 import { toast } from "sonner";
 
 export default function ResearcherDashboard() {
     const { user } = useAuth();
-    const [query, setQuery] = useState("");
-    const [isQuerying, setIsQuerying] = useState(false);
+    // unused legacy search state removed
 
-    const handleQuery = () => {
-        if (!query) return;
-        setIsQuerying(true);
-        // Mock query
-        setTimeout(() => {
-            setIsQuerying(false);
-            toast.success("Query submitted successfully. Processing...");
-        }, 1500);
+    // ZKP mutation verification state
+    const [mutChr, setMutChr] = useState<string>("");
+    const [mutPos, setMutPos] = useState<string>("");
+    const [mutRef, setMutRef] = useState<string>("");
+    const [mutAlt, setMutAlt] = useState<string>("");
+    const [zkpLoading, setZkpLoading] = useState(false);
+    const [zkpResult, setZkpResult] = useState<{ exists: boolean; proof: string | null } | null>(null);
+    const [zkpError, setZkpError] = useState<string | null>(null);
+
+    // Disease search state
+    const [diseaseQuery, setDiseaseQuery] = useState("");
+    const [diseaseResults, setDiseaseResults] = useState<DiseaseVariant[] | null>(null);
+    const [diseaseLoading, setDiseaseLoading] = useState(false);
+    const [diseaseError, setDiseaseError] = useState<string | null>(null);
+
+    // ...existing code...
+
+    const handleDiseaseSearch = async () => {
+        if (!diseaseQuery) {
+            setDiseaseError("Please enter a disease name to search.");
+            return;
+        }
+
+        console.log("[Researcher] Starting disease search for:", diseaseQuery);
+        setDiseaseLoading(true);
+        setDiseaseError(null);
+        setDiseaseResults(null); // clear previous results immediately
+
+        try {
+            const res = await api.queryDisease(diseaseQuery);
+            console.log("[Researcher] Raw response:", res);
+
+            // Defensive validation: expect an array
+            if (!Array.isArray(res)) {
+                const msg = "Unexpected response shape from /query/disease: expected array";
+                console.error("[Researcher]", msg, res);
+                setDiseaseError(msg);
+                toast.error(msg);
+                return;
+            }
+
+            setDiseaseResults(res);
+
+            if (!res || res.length === 0) {
+                console.info("[Researcher] No variants found for disease:", diseaseQuery);
+                toast.info("No variants found for that disease.");
+            } else {
+                toast.success(`Found ${res.length} variant(s)`);
+            }
+        } catch (err: unknown) {
+            console.error("[Researcher] Search failed:", err);
+            const msg = err instanceof Error ? err.message : String(err);
+            setDiseaseError(msg ?? "Unknown error");
+            toast.error(`Search failed: ${msg}`);
+        } finally {
+            setDiseaseLoading(false);
+            console.log("[Researcher] Disease search finished");
+        }
     };
 
     return (
@@ -51,6 +100,66 @@ export default function ResearcherDashboard() {
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
+                <Card className="border-emerald-500/10 shadow-md col-span-2">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <FlaskConical className="h-5 w-5 text-emerald-600" />
+                            Disease → Variant Search
+                        </CardTitle>
+                        <CardDescription>
+                            Enter a disease name to find matching variants across datasets.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="flex gap-2 items-center">
+                            <Input
+                                placeholder="e.g. cystic fibrosis, breast cancer"
+                                value={diseaseQuery}
+                                onChange={(e) => setDiseaseQuery(e.target.value)}
+                                className="flex-1 bg-background/80"
+                            />
+                            <Button onClick={handleDiseaseSearch} disabled={diseaseLoading}>
+                                {diseaseLoading ? "Searching..." : "Search Disease"}
+                            </Button>
+                        </div>
+
+                        {diseaseError && <p className="text-destructive text-sm">{diseaseError}</p>}
+
+                        {diseaseLoading ? (
+                            <p className="text-sm text-muted-foreground">Searching...</p>
+                        ) : diseaseResults !== null ? (
+                            diseaseResults.length > 0 ? (
+                                <div className="overflow-x-auto">
+                                    <p className="text-sm text-muted-foreground mb-2">{diseaseResults.length} result(s)</p>
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Chr</TableHead>
+                                                <TableHead>Pos</TableHead>
+                                                <TableHead>Ref</TableHead>
+                                                <TableHead>Alt</TableHead>
+                                                <TableHead>Disease</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {diseaseResults.map((d, i) => (
+                                                <TableRow key={`${d.chr}-${d.pos}-${d.ref ?? "n"}-${d.alt ?? "n"}-${i}`}>
+                                                    <TableCell className="font-mono text-sm">{d.chr}</TableCell>
+                                                    <TableCell>{d.pos}</TableCell>
+                                                    <TableCell>{d.ref ?? "-"}</TableCell>
+                                                    <TableCell>{d.alt ?? "-"}</TableCell>
+                                                    <TableCell className="font-medium">{d.disease}</TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            ) : (
+                                <p className="text-sm text-muted-foreground">No results found.</p>
+                            )
+                        ) : null}
+                    </CardContent>
+                </Card>
                 <Card className="border-primary/20 shadow-lg bg-gradient-to-br from-card to-primary/5">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
@@ -63,26 +172,65 @@ export default function ResearcherDashboard() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
-                            <Label>Gene or Variant ID (e.g. BRCA1, rs123456)</Label>
+                            <Label>Mutation (chr, pos, ref, alt)</Label>
                             <div className="flex gap-2">
-                                <Input
-                                    placeholder="Enter query..."
-                                    value={query}
-                                    onChange={(e) => setQuery(e.target.value)}
-                                    className="bg-background/80"
-                                />
-                                <Button onClick={handleQuery} disabled={isQuerying}>
-                                    {isQuerying ? "Searching..." : "Search"}
+                                <Input placeholder="chr (e.g. 1 or chr1)" value={mutChr} onChange={(e) => setMutChr(e.target.value)} className="w-1/4 bg-background/80" />
+                                <Input placeholder="pos" value={mutPos} onChange={(e) => setMutPos(e.target.value)} className="w-1/6 bg-background/80" />
+                                <Input placeholder="ref" value={mutRef} onChange={(e) => setMutRef(e.target.value)} className="w-1/6 bg-background/80" />
+                                <Input placeholder="alt" value={mutAlt} onChange={(e) => setMutAlt(e.target.value)} className="w-1/6 bg-background/80" />
+                                <Button onClick={async () => {
+                                    // handler inline to keep related logic nearby
+                                    if (!mutChr || !mutPos || !mutRef || !mutAlt) {
+                                        setZkpError("Please fill all mutation fields.");
+                                        return;
+                                    }
+
+                                    setZkpError(null);
+                                    setZkpResult(null);
+                                    setZkpLoading(true);
+                                    console.log("[Researcher] ZKP verify start", { mutChr, mutPos, mutRef, mutAlt });
+                                    try {
+                                        const posNum = Number(mutPos);
+                                        const res = await api.zkpMutation(mutChr, posNum, mutRef, mutAlt);
+                                        console.log("[Researcher] ZKP response:", res);
+                                        if (typeof res !== 'object' || !('exists' in res)) {
+                                            throw new Error('Unexpected response from zkp-mutation');
+                                        }
+                                        setZkpResult({ exists: !!res.exists, proof: res.proof ?? null });
+                                        if (res.exists) {
+                                            toast.success('Mutation exists (proof returned?)');
+                                        } else {
+                                            toast.info('Mutation does not exist');
+                                        }
+                                    } catch (err: unknown) {
+                                        console.error('[Researcher] ZKP failed:', err);
+                                        const msg = err instanceof Error ? err.message : String(err);
+                                        setZkpError(msg ?? 'Unknown error');
+                                        toast.error(`ZKP check failed: ${msg}`);
+                                    } finally {
+                                        setZkpLoading(false);
+                                        console.log('[Researcher] ZKP verify finished');
+                                    }
+                                }} disabled={zkpLoading}>
+                                    {zkpLoading ? 'Verifying...' : '🔐 Verify Mutation (Private)'}
                                 </Button>
                             </div>
                         </div>
-                        <div className="p-4 rounded-lg bg-muted/50 border border-dashed border-primary/20">
-                            <p className="text-xs text-muted-foreground text-center">
-                                Supported formats: VCF, HGVS, dbSMP IDs.
-                                <br />
-                                Proofs are generated using zk-SNARKs.
-                            </p>
-                        </div>
+
+                        {zkpError && <p className="text-destructive text-sm">{zkpError}</p>}
+
+                        {zkpLoading ? (
+                            <p className="text-sm text-muted-foreground">Verifying mutation privately...</p>
+                        ) : zkpResult ? (
+                            <div className="p-2 rounded-md border bg-muted/20">
+                                <p className="text-sm">Exists: <strong>{zkpResult.exists ? 'YES' : 'NO'}</strong></p>
+                                {zkpResult.proof ? (
+                                    <p className="text-sm text-emerald-600">🔐 ZKP Verified — proof available</p>
+                                ) : (
+                                    <p className="text-sm text-muted-foreground">No proof returned</p>
+                                )}
+                            </div>
+                        ) : null}
                     </CardContent>
                 </Card>
 

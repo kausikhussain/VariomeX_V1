@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useAuth } from "@/context/auth-context";
@@ -19,10 +18,64 @@ import {
     TableRow
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Dna, Activity, FileCheck, Clock, Upload, ArrowRight, X } from "lucide-react";
+import api, { CheckDiseaseResult, MutationResult } from "@/lib/api";
+import { useState } from "react";
+import { toast } from "sonner";
 
 export default function UserDashboard() {
     const { user } = useAuth();
+
+    // Genome disease check
+    const [genomeId, setGenomeId] = useState<string>("");
+    const [diseaseInput, setDiseaseInput] = useState<string>("");
+    const [checking, setChecking] = useState(false);
+    const [checkResult, setCheckResult] = useState<CheckDiseaseResult | null>(null);
+    const [checkError, setCheckError] = useState<string | null>(null);
+
+    const handleCheckDisease = async () => {
+        if (!genomeId || !diseaseInput) {
+            setCheckError("Please provide both genome ID and disease name.");
+            return;
+        }
+        console.log("[User] Checking genome", genomeId, "for disease", diseaseInput);
+        setChecking(true);
+        setCheckError(null);
+        setCheckResult(null); // clear previous result immediately
+        try {
+            const res = await api.checkGenomeDisease(genomeId, diseaseInput);
+            console.log("[User] Raw response:", res);
+
+            // Defensive validation
+            if (!res || typeof res !== "object" || !("has_mutations" in res)) {
+                const msg = "Unexpected response shape from /query/genome/{id}/check-disease";
+                console.error("[User]", msg, res);
+                setCheckError(msg);
+                toast.error(msg);
+                return;
+            }
+
+            setCheckResult(res as CheckDiseaseResult);
+
+            if (res.matched_diseases && res.matched_diseases.length > 0) {
+                toast.success(`Found ${res.matched_diseases.length} matched disease(s)`);
+            } else if (res.has_mutations) {
+                toast.info("Mutations found but no named matched diseases returned.");
+            } else {
+                toast.success("No matching mutations found for this disease in the genome.");
+            }
+        } catch (err: unknown) {
+            console.error("[User] Check failed:", err);
+            const msg = err instanceof Error ? err.message : String(err);
+            setCheckError(msg ?? "Unknown error");
+            toast.error(`Check failed: ${msg}`);
+        } finally {
+            setChecking(false);
+            console.log("[User] Genome check finished");
+        }
+    };
 
     return (
         <div className="flex flex-col gap-6">
@@ -36,6 +89,49 @@ export default function UserDashboard() {
                     Upload Genome
                 </Button>
             </div>
+
+            {/* Genome disease check card */}
+            <Card className="shadow-md border-primary/10">
+                <CardHeader>
+                    <CardTitle>Check Genome for Disease</CardTitle>
+                    <CardDescription>Check whether your genome contains mutations associated with a disease.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    <div className="flex gap-2">
+                        <Input placeholder="Genome ID (e.g. G-1234)" value={genomeId} onChange={(e) => setGenomeId((e.target as HTMLInputElement).value)} />
+                        <Input placeholder="Disease name (e.g. cystic fibrosis)" value={diseaseInput} onChange={(e) => setDiseaseInput((e.target as HTMLInputElement).value)} />
+                        <Button onClick={handleCheckDisease} disabled={checking}>{checking ? "Checking..." : "Check"}</Button>
+                    </div>
+
+                    {checkError && <p className="text-destructive text-sm">{checkError}</p>}
+
+                    {checking ? (
+                        <p className="text-sm text-muted-foreground">Checking...</p>
+                    ) : checkResult ? (
+                        <div className="space-y-2">
+                            <p className="text-sm">Has mutations: <strong>{checkResult.has_mutations ? "Yes" : "No"}</strong></p>
+                            <p className="text-sm">Matched diseases: <strong>{checkResult.matched_diseases?.length ?? 0}</strong></p>
+
+                            {checkResult.matched_diseases && checkResult.matched_diseases.length > 0 ? (
+                                <p className="text-sm text-muted-foreground">{checkResult.matched_diseases.join(", ")}</p>
+                            ) : (
+                                <p className="text-sm text-muted-foreground">No matched diseases returned.</p>
+                            )}
+
+                            {checkResult.mutations && checkResult.mutations.length > 0 ? (
+                                <div className="rounded-md border p-2 bg-muted/30">
+                                    <p className="text-xs font-medium">Matched Mutations ({checkResult.mutations.length})</p>
+                                    <ul className="text-sm list-disc list-inside">
+                                        {checkResult.mutations.map((m: MutationResult, i: number) => (
+                                            <li key={`${m.disease ?? 'mutation'}-${i}`}>{m.disease} {m.significance ? `— ${m.significance}` : ""}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
+                </CardContent>
+            </Card>
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <Card className="shadow-sm border-primary/10">

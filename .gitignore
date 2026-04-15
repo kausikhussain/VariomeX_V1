@@ -3,3 +3,6 @@ node_modules/
 dist/
 .env
 .DS_Store
+
+# Ignore ClinVar import VCF file
+clinvar.vcf
