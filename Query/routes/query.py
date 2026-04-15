@@ -106,56 +106,13 @@ def mutation_query(chr: str, pos: int, ref: str, alt: str, db=Depends(get_db)):
         "disease": annotation.get("disease") if annotation else None,
         "significance": annotation.get("significance") if annotation else None
     }
-
-
 # -----------------------------
-# ZKP MUTATION VERIFICATION
+# ZKP MUTATION (alias)
 # -----------------------------
-
 
 @router.get("/zkp-mutation")
 def zkp_mutation(chr: str, pos: int, ref: str, alt: str, db=Depends(get_db)):
-    """
-    Return whether a mutation exists in the variants collection and a placeholder ZKP proof.
-
-    This endpoint is a prototype: it performs a privacy-preserving existence check
-    and returns a proof placeholder. Later this should be replaced with a real
-    ZKP pipeline (Circom + snarkjs or other proving system). Comments indicate
-    where to plug the ZKP generation / verification logic.
-    """
-    variants, _ = _get_collections(db)
-
-    # Convert incoming coordinates to genomic space (if needed)
-    gen_chr, gen_pos = convert_to_genomic(db, chr, pos)
-
-    try:
-        # Strict allele-level match in genomic coordinates
-        query = {
-            "$or": [
-                {"genomic_chr": gen_chr, "genomic_pos": gen_pos, "ref": ref, "alt": alt},
-                {"chr": chr, "pos": pos, "ref": ref, "alt": alt}
-            ]
-        }
-
-        exists_count = variants.count_documents(query)
-        exists = exists_count > 0
-
-        # Placeholder proof generation
-        # In a production ZKP flow you would:
-        # 1) Build an arithmetic circuit that proves existence/non-existence of a variant
-        #    without revealing the genome itself.
-        # 2) Use the researcher's query inputs as public or private inputs depending
-        #    on the protocol design.
-        # 3) Generate a proof (using snarkjs or a server-side proving service) and
-        #    return it to the verifier.
-        # For now we return a placeholder string so the frontend can display a verified state.
-
-        proof = "zk-proof-placeholder" if exists else None
-
-        return {"exists": exists, "proof": proof}
-
-    except PyMongoError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return mutation_query(chr, pos, ref, alt, db)
 
 
 # -----------------------------
